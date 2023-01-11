@@ -1,0 +1,20 @@
+[package]
+name = "cyn"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+quote = ["dep:cyn_quote"]
+
+[dependencies]
+peeking_take_while = "1.0.0"
+
+[dependencies.cyn_quote]
+path = "cyn_quote"
+optional = true
+
+[workspace]
+members = [
+    "cyn_quote",
+    "cyn_quote/cyn_quote_proc",
+]
