@@ -37,14 +37,23 @@ mod quote {
     use crate::{ToTokens, TokenStream};
 
     impl ToTokens for Declr {
-        fn quote(&self) -> TokenStream {
+        fn to_tokens(&self, extend: &mut TokenStream) {
             match self {
-                Declr::Var(v) => v.quote(),
+                Declr::Var(v) => v.to_tokens(extend),
             }
         }
     }
 
     impl ToTokens for DeclrVar {
-        fn quote(&self) -> TokenStream {}
+        fn to_tokens(&self, extend: &mut TokenStream) {
+            let Self {
+                ty,
+                ident,
+                semi_colon,
+            } = self;
+            ty.to_tokens(extend);
+            ident.to_tokens(extend);
+            semi_colon.to_tokens(extend);
+        }
     }
 }

@@ -1,5 +1,6 @@
 use crate::buffers::Cursor;
 use crate::parse::{self, Parse, ParseStream, Result};
+use crate::TokenStream;
 use std::fmt::Display;
 
 pub trait Token: std::default::Default {
@@ -22,6 +23,19 @@ impl<T: Token> Parse for T {
                     .token_tree()
                     .map_or("end of buffer".to_string(), |(tt, _)| tt.to_string())
             )))
+        }
+    }
+}
+
+pub trait ToTokens {
+    fn to_tokens(&self, tokens: &mut TokenStream);
+}
+
+impl<T: ToTokens> ToTokens for Option<T> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        match self {
+            Some(some) => some.to_tokens(tokens),
+            None => {}
         }
     }
 }
@@ -92,8 +106,8 @@ impl Display for TokenTree {
     }
 }
 
-fn tt_new_helper(ty: TokenTreeTy) -> Box<[TokenTree]> {
-    Box::new([TokenTree { col: 0, row: 0, ty }])
+fn tt_new(ty: TokenTreeTy) -> TokenTree {
+    TokenTree { col: 0, row: 0, ty }
 }
 
 macro_rules! define_keywords {
@@ -133,12 +147,12 @@ macro_rules! define_keywords {
         )*
 
         mod quote_kw {
-            use $crate::{ToTokens, TokenStream};
+            use $crate::TokenStream;
             use super::*;
             $(
                 impl ToTokens for $ident {
-                    fn quote(&self) -> TokenStream {
-                        TokenStream::new(tt_new_helper(TokenTreeTy::Ident(Self::display().to_string())))
+                    fn to_tokens(&self, tokens: &mut TokenStream) {
+                        tokens.extend_one(tt_new(TokenTreeTy::Ident(Self::display().to_string())))
                     }
                 }
             )*
@@ -231,12 +245,12 @@ macro_rules! define_punctuator {
         )*
 
         mod quote_p {
-            use $crate::{ToTokens, TokenStream};
+            use $crate::TokenStream;
             use super::*;
             $(
                 impl ToTokens for $ident {
-                    fn quote(&self) -> TokenStream {
-                        TokenStream::new(tt_new_helper(TokenTreeTy::Punct(Punct::$ident($ident))))
+                    fn to_tokens(&self, tokens: &mut TokenStream) {
+                        tokens.extend_one(tt_new(TokenTreeTy::Punct(Punct::$ident($ident))))
                     }
                 }
             )*

@@ -22,3 +22,15 @@ pub use buffers::{ParseBuffer, TokenStream};
 pub use ident::Ident;
 pub use lit::{Lit, LitInt, LitStr};
 pub use parse::{Error, Parse, ParseStream, Punctuated, Result};
+pub use tokens::ToTokens;
+
+pub fn to_tokens<T: ToTokens>(v: &T) -> TokenStream {
+    let mut ts = TokenStream::new_empty();
+    v.to_tokens(&mut ts);
+    ts
+}
+
+pub fn parse_file(input: impl AsRef<str>) -> file::File {
+    let _input = input.as_ref();
+    todo!()
+}

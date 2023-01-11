@@ -27,7 +27,7 @@ impl TokenStream {
         })
     }
 
-    pub fn new_empty() -> Self {
+    pub(crate) fn new_empty() -> Self {
         Self {
             entries: Box::new([]),
         }
@@ -37,9 +37,15 @@ impl TokenStream {
         Self { entries }
     }
 
-    pub fn extend(&mut self, extend: &TokenStream) {
+    pub fn extend(&mut self, ts: &TokenStream) {
         let mut new = self.entries.to_vec();
-        new.extend_from_slice(&extend.entries);
+        new.extend_from_slice(&ts.entries);
+        self.entries = new.into_boxed_slice();
+    }
+
+    pub fn extend_one(&mut self, tt: TokenTree) {
+        let mut new = self.entries.to_vec();
+        new.push(tt);
         self.entries = new.into_boxed_slice();
     }
 
@@ -48,11 +54,11 @@ impl TokenStream {
         Self: 'a,
     {
         let cursor = self.cursor();
-        let parse_buffer = ParseBuffer::new::<'a>(cursor);
+        let parse_buffer = ParseBuffer::new(cursor);
         P::parse(&parse_buffer)
     }
 
-    fn cursor(&self) -> Cursor<'static> {
+    fn cursor<'a>(&'a self) -> Cursor<'a> {
         let entries = &self.entries;
         unsafe { Cursor::new(entries.as_ptr(), entries.len()) }
     }
@@ -74,6 +80,13 @@ impl<'a> Cursor<'a> {
             pos,
             end: pos.add(len),
             marker: Default::default(),
+        }
+    }
+
+    pub fn from_cursor<'b>(cursor: Cursor<'b>) -> Self {
+        Self {
+            marker: Default::default(),
+            ..cursor
         }
     }
 
@@ -169,9 +182,9 @@ pub struct ParseBuffer<'a> {
 }
 
 impl<'a> ParseBuffer<'a> {
-    pub(crate) fn new<'b>(cursor: Cursor<'static>) -> ParseBuffer<'b> {
+    pub(crate) fn new(cursor: Cursor<'a>) -> Self {
         ParseBuffer {
-            cursor: Cell::new(cursor),
+            cursor: Cell::new(Cursor::from_cursor(cursor)),
             mark: Default::default(),
         }
     }

@@ -20,12 +20,10 @@ mod quote {
     use crate::{ToTokens, TokenStream};
 
     impl ToTokens for File {
-        fn quote(&self) -> TokenStream {
-            let mut ts = TokenStream::new_empty();
+        fn to_tokens(&self, extend: &mut TokenStream) {
             for decl in &self.declarations {
-                ts.extend(decl.quote())
+                decl.to_tokens(extend)
             }
-            ts
         }
     }
 }
