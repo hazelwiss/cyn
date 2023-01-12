@@ -1,4 +1,4 @@
-use crate::declarations::Declr;
+use crate::declr::Declr;
 use crate::Parse;
 
 pub struct File {

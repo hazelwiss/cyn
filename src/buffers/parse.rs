@@ -130,24 +130,33 @@ fn split(mut iter: impl Iterator<Item = char>) -> Result<Vec<Parsed>> {
             }
             _ => {
                 let mut punct = String::new();
+                let mut cur_punct = None;
                 'exit: {
-                    while let Some(next) = iter.next() {
-                        match next {
-                            c if c.is_whitespace() => break,
-                            c => {
-                                punct.push(c);
-                                match tokens::match_punct(&punct) {
-                                    tokens::PunctMatch::Matched(matched) => {
-                                        p!(ParsedTy::Punct(matched));
-                                        break 'exit;
-                                    }
-                                    tokens::PunctMatch::Partial => {}
-                                    tokens::PunctMatch::None => break,
+                    while let Some(next) = iter.peek() {
+                        punct.push(*next);
+                        match tokens::match_punct(&punct) {
+                            tokens::PunctMatch::Matched(matched) => {
+                                cur_punct = Some(matched);
+                            }
+                            tokens::PunctMatch::Partial => {
+                                cur_punct = None;
+                            }
+                            tokens::PunctMatch::None => {
+                                if let Some(punct) = cur_punct {
+                                    p!(ParsedTy::Punct(punct));
+                                    break 'exit;
+                                } else {
+                                    break;
                                 }
                             }
                         }
+                        iter.next();
                     }
-                    return e!(format!("Expected punctuator, got '{punct}'"));
+                    if let Some(punct) = cur_punct {
+                        p!(ParsedTy::Punct(punct))
+                    } else {
+                        return e!(format!("Expected punctuator, got '{punct}'"));
+                    }
                 }
             }
         };

@@ -5,16 +5,17 @@ ast_enum! {
 }
 
 use crate::ty::Ty;
+use crate::var::Vars;
 
 ast_struct! {
     pub struct DeclrVar{
         pub ty: Ty,
-        pub ident: Ident,
+        pub vars: Vars,
         pub semi_colon: token![;],
     }
 }
 
-use crate::{Ident, Parse, ParseStream, Result};
+use crate::{Parse, ParseStream, Result};
 
 impl Parse for Declr {
     fn parse(parse: ParseStream) -> Result<Self> {
@@ -26,7 +27,7 @@ impl Parse for DeclrVar {
     fn parse(parse: ParseStream) -> Result<Self> {
         Ok(Self {
             ty: parse.parse()?,
-            ident: parse.parse()?,
+            vars: parse.parse()?,
             semi_colon: parse.parse()?,
         })
     }
@@ -48,11 +49,11 @@ mod quote {
         fn to_tokens(&self, extend: &mut TokenStream) {
             let Self {
                 ty,
-                ident,
+                vars,
                 semi_colon,
             } = self;
             ty.to_tokens(extend);
-            ident.to_tokens(extend);
+            vars.to_tokens(extend);
             semi_colon.to_tokens(extend);
         }
     }

@@ -14,7 +14,7 @@ fn test() {
         Ok(res) => res,
         Err(err) => panic!("{err}"),
     };
-    let ts = cyn::to_tokens(&test);
+    let ts = cyn::to_tokens::to_tokens(&test);
     println!("parsed:\n{ts}");
     panic!("");
 }

@@ -1,6 +1,6 @@
 use crate::buffers::Cursor;
 use crate::parse::{self, Parse, ParseStream, Result};
-use crate::TokenStream;
+use crate::ToTokens;
 use std::fmt::Display;
 
 pub trait Token: std::default::Default {
@@ -27,19 +27,6 @@ impl<T: Token> Parse for T {
     }
 }
 
-pub trait ToTokens {
-    fn to_tokens(&self, tokens: &mut TokenStream);
-}
-
-impl<T: ToTokens> ToTokens for Option<T> {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            Some(some) => some.to_tokens(tokens),
-            None => {}
-        }
-    }
-}
-
 pub(crate) enum PunctMatch {
     Matched(Punct),
     Partial,
@@ -48,16 +35,15 @@ pub(crate) enum PunctMatch {
 
 pub(crate) fn match_punct(str: &str) -> PunctMatch {
     let mut iter = MATCH_PUNCT.iter().filter(|(cmp, _)| cmp.starts_with(str));
-    let partial = iter.clone().count() > 0;
-    while let Some((cmp, val)) = iter.next() {
-        if *cmp == str {
-            return PunctMatch::Matched(*val);
-        }
-    }
-    if partial {
-        PunctMatch::Partial
+    let collected = iter.clone().count();
+    if let Some((_, p)) = iter.find(|(cmp, _)| *cmp == str) {
+        PunctMatch::Matched(*p)
     } else {
-        PunctMatch::None
+        if collected != 0 {
+            PunctMatch::Partial
+        } else {
+            PunctMatch::None
+        }
     }
 }
 
@@ -339,7 +325,7 @@ macro_rules! define_delimeter {
             $vis struct $ident;
 
             impl $ident{
-                pub fn parse_inner(parse: ParseStream) -> Result<Box<[TokenTree]>>{
+                pub fn parse_inner<'a>(parse: ParseStream<'a>) -> Result<&'a [TokenTree]>{
                     if let Some(entries) = parse.group(Delimeter::$ident){
                         Ok(entries)
                     } else{
@@ -492,10 +478,10 @@ macro_rules! token {
 macro_rules! match_tokens {
     ($parse:expr; $($t:ty => $v:expr,)*; $def:expr $(,)? ) => {
         'b: {
-            let parse = $parse.clone();
+            let parse = $parse.fork();
             $(
                 if <$t as $crate::tokens::Token>::peek(parse.cursor()){
-                    $parse.update_cursor(parse.cursor());
+                    #[allow(unreachable_code)]
                     break 'b ($v)
                 }
             )*

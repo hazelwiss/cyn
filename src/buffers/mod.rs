@@ -37,6 +37,10 @@ impl TokenStream {
         Self { entries }
     }
 
+    pub(crate) fn into_inner(self) -> Box<[TokenTree]> {
+        self.entries
+    }
+
     pub fn extend(&mut self, ts: &TokenStream) {
         let mut new = self.entries.to_vec();
         new.extend_from_slice(&ts.entries);
@@ -64,7 +68,7 @@ impl TokenStream {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Cursor<'a> {
     pos: *const TokenTree,
     end: *const TokenTree,
@@ -138,11 +142,9 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    pub fn group(self, delim: Delimeter) -> Option<(Box<[TokenTree]>, Cursor<'a>)> {
+    pub fn group(self, delim: Delimeter) -> Option<(&'a [TokenTree], Cursor<'a>)> {
         match &self.entry()?.ty {
-            TokenTreeTy::Group(cmp, entries) if *cmp == delim => {
-                Some((entries.clone(), self.next()))
-            }
+            TokenTreeTy::Group(cmp, entries) if *cmp == delim => Some((entries, self.next())),
             _ => None,
         }
     }
@@ -175,7 +177,6 @@ impl<'a> Cursor<'a> {
     }
 }
 
-#[derive(Clone)]
 pub struct ParseBuffer<'a> {
     cursor: Cell<Cursor<'static>>,
     mark: PhantomData<Cursor<'a>>,
@@ -201,35 +202,38 @@ impl<'a> ParseBuffer<'a> {
         P::parse(self)
     }
 
+    pub fn fork(&self) -> Self {
+        Self {
+            cursor: self.cursor.clone(),
+            ..*self
+        }
+    }
+
     pub fn peek<P: Parse>(&self) -> bool {
-        self.clone().parse::<P>().is_ok()
+        self.fork().parse::<P>().is_ok()
     }
 
     pub fn eat<P: Parse>(&self) -> Option<P> {
-        let clone = self.clone();
-        if let Ok(parsed) = clone.parse::<P>() {
-            self.update_cursor(clone.cursor());
+        let fork = self.fork();
+        if let Ok(parsed) = fork.parse::<P>() {
+            self.update_cursor(fork.cursor());
             Some(parsed)
         } else {
             None
         }
     }
 
-    pub fn expect<P: Parse>(&self) -> bool {
-        self.eat::<P>().is_some()
-    }
-
     pub fn lookahead1<P: Parse>(&self) -> bool {
-        let clone = self.clone();
-        clone.skip();
-        clone.peek::<P>()
+        let fork = self.fork();
+        fork.skip();
+        fork.peek::<P>()
     }
 
     pub fn lookahead2<P: Parse>(&self) -> bool {
-        let clone = self.clone();
-        clone.skip();
-        clone.skip();
-        clone.peek::<P>()
+        let fork = self.fork();
+        fork.skip();
+        fork.skip();
+        fork.peek::<P>()
     }
 
     pub fn call<P, F: Fn(ParseStream) -> Result<P>>(&self, call: F) -> Result<P> {
@@ -275,7 +279,7 @@ impl<'a> ParseBuffer<'a> {
         }
     }
 
-    pub(crate) fn group(&self, delim: Delimeter) -> Option<Box<[TokenTree]>> {
+    pub(crate) fn group(&self, delim: Delimeter) -> Option<&'a [TokenTree]> {
         if let Some((group, next)) = self.cursor.get().group(delim) {
             self.cursor.set(next);
             Some(group)
