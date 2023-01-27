@@ -73,7 +73,7 @@ macro_rules! delim {
     ($ty:ident, $out:ident in $parse:expr) => {{
         $out = {
             let ts = $crate::tokens::$ty::parse_inner($parse)?;
-            let cursor = unsafe { $crate::buffers::Cursor::from_token_stream(&ts) };
+            let cursor = $crate::buffers::Cursor::from_token_stream(&ts);
             $crate::buffers::ParseBuffer::new(cursor)
         };
         Ok($crate::tokens::$ty)
