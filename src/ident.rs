@@ -1,4 +1,5 @@
-use crate::parse::{Parse, ParseStream, Result};
+use crate::buffers::Cursor;
+use crate::tokens::Token;
 
 #[derive(Debug, Clone)]
 pub struct Ident(String);
@@ -20,26 +21,44 @@ impl Ident {
     }
 }
 
+impl Token for Ident {
+    fn peek(cursor: Cursor) -> bool {
+        if let Some((ident, _)) = cursor.ident() {
+            Ident::valid_ident(&ident)
+        } else {
+            false
+        }
+    }
+
+    fn display() -> &'static str {
+        "identifier"
+    }
+}
+
+use crate::{Parse, ParseStream, Result};
+
 impl Parse for Ident {
     fn parse(parse: ParseStream) -> Result<Self> {
-        let ident = parse.ident().ok_or(parse.error("expected identifier"))?;
-        let err = &format!("invalid identifier {ident}");
-        Ok(Ident::new(ident).ok_or(parse.error(err))?)
+        parse.step(|cursor| {
+            if let Some((ident, new)) = cursor.ident() {
+                cursor.set(new);
+                Ok(Ident::new(ident.clone())
+                    .ok_or(parse.error(format!("invalid identifier {ident}")))?)
+            } else {
+                Err(parse.error("expected identifier"))
+            }
+        })
     }
 }
 
 mod quote {
     use super::Ident;
-    use crate::tokens::{TokenTree, TokenTreeTy};
+    use crate::tokens::TokenTree;
     use crate::{ToTokens, TokenStream};
 
     impl ToTokens for Ident {
         fn to_tokens(&self, tokens: &mut TokenStream) {
-            tokens.extend_one(TokenTree {
-                col: 0,
-                row: 0,
-                ty: TokenTreeTy::Ident(self.0.clone()),
-            })
+            tokens.extend_one(TokenTree::Ident(self.0.clone()))
         }
     }
 }

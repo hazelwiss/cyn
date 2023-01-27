@@ -1,12 +1,15 @@
 mod parse;
 
-use crate::parse::{Error, Parse, ParseStream, Result};
-use crate::tokens::{Delimeter, Literal, Punct, TokenTree, TokenTreeTy};
+use crate::parse::{Parse, ParseStream};
+use crate::peek::Lookahead;
+use crate::tokens::{Delimeter, Literal, Punct, TokenCell, TokenTree};
+use crate::{Error, Peek, Result};
 use std::cell::Cell;
 use std::{fmt::Display, marker::PhantomData};
 
+#[derive(Clone)]
 pub struct TokenStream {
-    entries: Box<[TokenTree]>,
+    entries: Box<[TokenCell]>,
 }
 
 impl Display for TokenStream {
@@ -15,7 +18,7 @@ impl Display for TokenStream {
             &self
                 .entries
                 .iter()
-                .fold(String::new(), |acc, n| format!("{acc}{n} ")),
+                .fold(String::new(), |acc, n| format!("{acc}{} ", n.tt)),
         )
     }
 }
@@ -33,11 +36,11 @@ impl TokenStream {
         }
     }
 
-    pub(crate) fn new(entries: Box<[TokenTree]>) -> Self {
+    pub(crate) fn new(entries: Box<[TokenCell]>) -> Self {
         Self { entries }
     }
 
-    pub(crate) fn into_inner(self) -> Box<[TokenTree]> {
+    pub(crate) fn into_inner(self) -> Box<[TokenCell]> {
         self.entries
     }
 
@@ -49,7 +52,7 @@ impl TokenStream {
 
     pub fn extend_one(&mut self, tt: TokenTree) {
         let mut new = self.entries.to_vec();
-        new.push(tt);
+        new.push(TokenCell { col: 0, row: 0, tt });
         self.entries = new.into_boxed_slice();
     }
 
@@ -70,8 +73,8 @@ impl TokenStream {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cursor<'a> {
-    pos: *const TokenTree,
-    end: *const TokenTree,
+    pos: *const TokenCell,
+    end: *const TokenCell,
     marker: PhantomData<&'a ()>,
 }
 
@@ -79,12 +82,17 @@ impl<'a> Cursor<'a> {
     /// # Safety
     /// if len is larger than the referenced slice, it will either
     /// cause undefined behaviour, or othe program bugs.
-    pub unsafe fn new(pos: *const TokenTree, len: usize) -> Self {
+    /// The resulting cursor might be given a static lifetime.
+    pub(crate) unsafe fn new(pos: *const TokenCell, len: usize) -> Self {
         Self {
             pos,
             end: pos.add(len),
             marker: Default::default(),
         }
+    }
+
+    pub fn from_token_stream(ts: &'a TokenStream) -> Self {
+        Self::from_cursor(ts.cursor())
     }
 
     pub fn from_cursor<'b>(cursor: Cursor<'b>) -> Self {
@@ -94,14 +102,14 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    fn next(self) -> Self {
+    pub fn next(self) -> Self {
         Self {
             pos: unsafe { self.pos.add(1) },
             ..self
         }
     }
 
-    fn entry(self) -> Option<&'static TokenTree> {
+    fn entry_cell(self) -> Option<&'a TokenCell> {
         if self.pos < self.end {
             let val = unsafe { &*self.pos };
             Some(val)
@@ -110,48 +118,72 @@ impl<'a> Cursor<'a> {
         }
     }
 
+    fn entry(self) -> Option<&'a TokenTree> {
+        self.entry_cell().map(|e| &e.tt)
+    }
+
     fn is_empty(&self) -> bool {
         self.pos >= self.end
     }
 
-    pub fn ident(self) -> Option<(String, Cursor<'a>)> {
-        match &self.entry()?.ty {
-            TokenTreeTy::Ident(ident) => Some((ident.clone(), self.next())),
+    pub fn peek<P: Peek>(self) -> bool {
+        P::peek(self.clone())
+    }
+
+    pub fn lookahead1(self) -> Lookahead<'a> {
+        Lookahead::new(self)
+    }
+
+    pub fn set(&mut self, other: Self) {
+        *self = other;
+    }
+
+    pub fn ident(self) -> Option<(&'a String, Cursor<'a>)> {
+        match &self.entry()? {
+            TokenTree::Ident(ident) => Some((&ident, self.next())),
             _ => None,
         }
     }
 
-    pub fn literal(self) -> Option<(Literal, Cursor<'a>)> {
-        match &self.entry()?.ty {
-            TokenTreeTy::Literal(lit) => Some((lit.clone(), self.next())),
+    pub fn literal(self) -> Option<(&'a Literal, Cursor<'a>)> {
+        match &self.entry()? {
+            TokenTree::Literal(lit) => Some((&lit, self.next())),
             _ => None,
         }
     }
 
-    pub fn punct(self) -> Option<(Punct, Cursor<'a>)> {
-        match self.entry()?.ty {
-            TokenTreeTy::Punct(punct) => Some((punct.clone(), self.next())),
+    pub fn punct(self) -> Option<(&'a Punct, Cursor<'a>)> {
+        match &self.entry()? {
+            TokenTree::Punct(punct) => Some((&punct, self.next())),
             _ => None,
         }
     }
 
-    pub fn delim(self) -> Option<(Delimeter, Cursor<'a>)> {
-        match self.entry()?.ty {
-            TokenTreeTy::Group(group, _) => Some((group.clone(), self.next())),
+    pub fn delim(self) -> Option<(&'a Delimeter, Cursor<'a>)> {
+        match &self.entry()? {
+            TokenTree::Group(group, _) => Some((group, self.next())),
             _ => None,
         }
     }
 
-    pub fn group(self, delim: Delimeter) -> Option<(&'a [TokenTree], Cursor<'a>)> {
-        match &self.entry()?.ty {
-            TokenTreeTy::Group(cmp, entries) if *cmp == delim => Some((entries, self.next())),
+    pub fn group(self, delim: Delimeter) -> Option<(&'a TokenStream, Cursor<'a>)> {
+        match &self.entry()? {
+            TokenTree::Group(cmp, entries) if *cmp == delim => Some((entries, self.next())),
             _ => None,
         }
     }
 
-    pub fn token_tree(self) -> Option<(TokenTree, Cursor<'a>)> {
+    pub fn token_tree(self) -> Option<(&'a TokenTree, Cursor<'a>)> {
         if let Some(tt) = self.entry() {
-            Some((tt.clone(), self.next()))
+            Some((tt, self.next()))
+        } else {
+            None
+        }
+    }
+
+    fn token_cell(self) -> Option<(&'a TokenCell, Cursor<'a>)> {
+        if let Some(tt) = self.entry_cell() {
+            Some((tt, self.next()))
         } else {
             None
         }
@@ -159,15 +191,15 @@ impl<'a> Cursor<'a> {
 
     pub fn token_stream(mut self) -> TokenStream {
         let mut vec = vec![];
-        while let Some((tt, next)) = self.token_tree() {
+        while let Some((tt, next)) = self.token_cell() {
             self = next;
-            vec.push(tt);
+            vec.push(tt.clone());
         }
         TokenStream::new(vec.into_boxed_slice())
     }
 
     pub fn error(self, err: impl Display) -> Error {
-        let entry = self.entry();
+        let entry = self.entry_cell();
         let (col, row) = if let Some(entry) = entry {
             (entry.col, entry.row)
         } else {
@@ -190,16 +222,8 @@ impl<'a> ParseBuffer<'a> {
         }
     }
 
-    pub(crate) fn update_cursor(&self, cursor: Cursor<'static>) {
-        self.cursor.set(cursor)
-    }
-
     pub fn is_empty(&self) -> bool {
         self.cursor().is_empty()
-    }
-
-    pub fn parse<P: Parse>(&self) -> Result<P> {
-        P::parse(self)
     }
 
     pub fn fork(&self) -> Self {
@@ -209,39 +233,57 @@ impl<'a> ParseBuffer<'a> {
         }
     }
 
-    pub fn peek<P: Parse>(&self) -> bool {
-        self.fork().parse::<P>().is_ok()
+    pub fn set(&self, other: Self) {
+        self.cursor.set(other.cursor())
+    }
+
+    pub fn parse<P: Parse>(&self) -> Result<P> {
+        P::parse(self)
     }
 
     pub fn eat<P: Parse>(&self) -> Option<P> {
         let fork = self.fork();
         if let Ok(parsed) = fork.parse::<P>() {
-            self.update_cursor(fork.cursor());
+            self.set(fork);
             Some(parsed)
         } else {
             None
         }
     }
 
-    pub fn lookahead1<P: Parse>(&self) -> bool {
-        let fork = self.fork();
-        fork.skip();
-        fork.peek::<P>()
+    pub fn expect<P: Parse>(&self) -> bool {
+        self.parse::<P>().is_ok()
     }
 
-    pub fn lookahead2<P: Parse>(&self) -> bool {
-        let fork = self.fork();
-        fork.skip();
-        fork.skip();
-        fork.peek::<P>()
+    pub fn lookahead1(&self) -> Lookahead {
+        self.cursor().lookahead1()
     }
 
-    pub fn call<P, F: Fn(ParseStream) -> Result<P>>(&self, call: F) -> Result<P> {
-        call(self)
+    pub fn peek<P: Peek>(&self) -> bool {
+        self.cursor().peek::<P>()
+    }
+
+    pub fn peek2<P: Peek>(&self) -> bool {
+        self.cursor().next().peek::<P>()
+    }
+
+    pub fn peek3<P: Peek>(&self) -> bool {
+        self.cursor().next().next().peek::<P>()
+    }
+
+    pub fn call<P>(&self, f: impl Fn(ParseStream) -> Result<P>) -> Result<P> {
+        f(self)
+    }
+
+    pub fn step<P>(&self, f: impl Fn(&mut Cursor<'static>) -> Result<P>) -> Result<P> {
+        let mut cursor = self.cursor();
+        let result = f(&mut cursor)?;
+        self.cursor.set(cursor);
+        Ok(result)
     }
 
     pub fn skip(&self) {
-        self.update_cursor(self.cursor().next())
+        self.cursor.set(self.cursor().next())
     }
 
     pub fn error(&self, err: impl Display) -> Error {
@@ -250,41 +292,5 @@ impl<'a> ParseBuffer<'a> {
 
     pub fn cursor(&self) -> Cursor<'static> {
         self.cursor.get()
-    }
-
-    pub(crate) fn ident(&self) -> Option<String> {
-        if let Some((ident, next)) = self.cursor.get().ident() {
-            self.cursor.set(next);
-            Some(ident)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn literal(&self) -> Option<Literal> {
-        if let Some((lit, next)) = self.cursor.get().literal() {
-            self.cursor.set(next);
-            Some(lit)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn punct(&self) -> Option<Punct> {
-        if let Some((punct, next)) = self.cursor.get().punct() {
-            self.cursor.set(next);
-            Some(punct)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) fn group(&self, delim: Delimeter) -> Option<&'a [TokenTree]> {
-        if let Some((group, next)) = self.cursor.get().group(delim) {
-            self.cursor.set(next);
-            Some(group)
-        } else {
-            None
-        }
     }
 }

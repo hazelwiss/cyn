@@ -1,1 +1,1 @@
-int test0 = 2 + 5 * (2 + 3) + 1;
+int hello;

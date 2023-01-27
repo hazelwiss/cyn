@@ -1,4 +1,4 @@
-ast_enum! {
+ast_enum_simple! {
     pub enum UnOp {
         PreInc(token![++]),
         PreDec(token![--]),
@@ -11,7 +11,7 @@ ast_enum! {
     }
 }
 
-ast_enum! {
+ast_enum_simple! {
     pub enum BiOp {
         Mul(token![*]),
         Div(token![/]),
@@ -34,7 +34,7 @@ ast_enum! {
     }
 }
 
-ast_enum! {
+ast_enum_simple! {
     pub enum AssignOp {
         Eq(token![=]),
         Mul(token![*=]),
@@ -50,7 +50,7 @@ ast_enum! {
     }
 }
 
-ast_enum! {
+ast_enum_simple! {
     pub enum PostOp {
         Inc(token![++]),
         Dec(token![--]),
@@ -58,7 +58,7 @@ ast_enum! {
 }
 
 mod quote {
-    use super::*;
+    use super::{AssignOp, BiOp, PostOp, UnOp};
     use crate::{ToTokens, TokenStream};
 
     impl ToTokens for UnOp {

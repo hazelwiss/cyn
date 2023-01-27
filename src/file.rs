@@ -1,9 +1,10 @@
-use crate::declr::Declr;
-use crate::Parse;
+use crate::Item;
 
 pub struct File {
-    pub declarations: Vec<Declr>,
+    pub declarations: Vec<Item>,
 }
+
+use crate::Parse;
 
 impl Parse for File {
     fn parse(parse: crate::ParseStream) -> crate::Result<Self> {

@@ -1,30 +1,12 @@
 use crate::buffers::Cursor;
-use crate::parse::{self, Parse, ParseStream, Result};
-use crate::ToTokens;
+use crate::parse::{Parse, ParseStream};
+use crate::{Result, ToTokens, TokenStream};
 use std::fmt::Display;
 
-pub trait Token: std::default::Default {
+pub trait Token {
     fn peek(cursor: Cursor) -> bool;
 
     fn display() -> &'static str;
-}
-
-impl<T: Token> Parse for T {
-    fn parse(parse: ParseStream) -> parse::Result<Self> {
-        if T::peek(parse.cursor()) {
-            parse.skip();
-            Ok(T::default())
-        } else {
-            Err(parse.error(format!(
-                "expected token '{}', got '{}'",
-                T::display(),
-                parse
-                    .cursor()
-                    .token_tree()
-                    .map_or("end of buffer".to_string(), |(tt, _)| tt.to_string())
-            )))
-        }
-    }
 }
 
 pub(crate) enum PunctMatch {
@@ -55,33 +37,31 @@ pub enum Literal {
 }
 
 #[derive(Clone)]
-pub enum TokenTreeTy {
-    Ident(String),
-    Literal(Literal),
-    Punct(Punct),
-    Group(Delimeter, Box<[TokenTree]>),
+pub(crate) struct TokenCell {
+    pub col: usize,
+    pub row: usize,
+    pub tt: TokenTree,
 }
 
 #[derive(Clone)]
-pub struct TokenTree {
-    pub col: usize,
-    pub row: usize,
-    pub ty: TokenTreeTy,
+pub enum TokenTree {
+    Ident(String),
+    Literal(Literal),
+    Punct(Punct),
+    Group(Delimeter, TokenStream),
 }
 
 impl Display for TokenTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&match &self.ty {
-            TokenTreeTy::Ident(ident) => ident.clone(),
-            TokenTreeTy::Literal(Literal::Str(str)) => str.clone(),
-            TokenTreeTy::Literal(Literal::Int(i)) => i.to_string(),
-            TokenTreeTy::Literal(Literal::Float(f)) => f.to_string(),
-            TokenTreeTy::Punct(punct) => punct.to_string(),
-            TokenTreeTy::Group(group, entries) => {
-                let string = entries
-                    .iter()
-                    .fold(String::new(), |acc, n| format!("{acc}{n} "))
-                    .to_string();
+        f.write_str(&match &self {
+            TokenTree::Ident(ident) => ident.clone(),
+            TokenTree::Literal(Literal::Str(str)) => str.clone(),
+            TokenTree::Literal(Literal::Int(i)) => i.to_string(),
+            TokenTree::Literal(Literal::Float(f)) => f.to_string(),
+            TokenTree::Punct(punct) => punct.to_string(),
+            TokenTree::Group(group, entries) => {
+                let string = entries.to_string();
+                let string = string.trim();
                 match group {
                     Delimeter::Paren => format!("( {string} )"),
                     Delimeter::Bracket => format!("[ {string} ]"),
@@ -92,8 +72,44 @@ impl Display for TokenTree {
     }
 }
 
-fn tt_new(ty: TokenTreeTy) -> TokenTree {
-    TokenTree { col: 0, row: 0, ty }
+macro_rules! impl_token_parse {
+    ($ty:ty) => {
+        impl Parse for $ty {
+            fn parse(parse: ParseStream) -> Result<Self> {
+                if <$ty as Token>::peek(parse.cursor()) {
+                    parse.skip();
+                    Ok(Self)
+                } else {
+                    Err(parse.error(format!(
+                        "expected token '{}', got '{}'",
+                        <$ty>::display(),
+                        parse
+                            .cursor()
+                            .token_tree()
+                            .map_or("end of buffer".to_string(), |(tt, _)| tt.to_string())
+                    )))
+                }
+            }
+        }
+
+        impl_token!($ty);
+    };
+}
+
+macro_rules! impl_token {
+    ($ty:ty) => {
+        impl Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(<$ty>::display())
+            }
+        }
+
+        impl core::default::Default for $ty {
+            fn default() -> Self {
+                Self
+            }
+        }
+    };
 }
 
 macro_rules! define_keywords {
@@ -119,17 +135,7 @@ macro_rules! define_keywords {
                 }
             }
 
-            impl Display for $ident {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    f.write_str($str)
-                }
-            }
-
-            impl std::default::Default for $ident{
-                fn default() -> Self{
-                    Self
-                }
-            }
+            impl_token_parse!($ident);
         )*
 
         mod quote_kw {
@@ -138,7 +144,7 @@ macro_rules! define_keywords {
             $(
                 impl ToTokens for $ident {
                     fn to_tokens(&self, tokens: &mut TokenStream) {
-                        tokens.extend_one(tt_new(TokenTreeTy::Ident(Self::display().to_string())))
+                        tokens.extend_one(TokenTree::Ident(Self::display().to_string()))
                     }
                 }
             )*
@@ -217,17 +223,7 @@ macro_rules! define_punctuator {
                 }
             }
 
-            impl Display for $ident {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    f.write_str($str)
-                }
-            }
-
-            impl std::default::Default for $ident{
-                fn default() -> Self{
-                    Self
-                }
-            }
+            impl_token_parse!($ident);
         )*
 
         mod quote_p {
@@ -236,7 +232,7 @@ macro_rules! define_punctuator {
             $(
                 impl ToTokens for $ident {
                     fn to_tokens(&self, tokens: &mut TokenStream) {
-                        tokens.extend_one(tt_new(TokenTreeTy::Punct(Punct::$ident($ident))))
+                        tokens.extend_one(TokenTree::Punct(Punct::$ident($ident)))
                     }
                 }
             )*
@@ -325,12 +321,15 @@ macro_rules! define_delimeter {
             $vis struct $ident;
 
             impl $ident{
-                pub fn parse_inner<'a>(parse: ParseStream<'a>) -> Result<&'a [TokenTree]>{
-                    if let Some(entries) = parse.group(Delimeter::$ident){
-                        Ok(entries)
-                    } else{
-                        Err(parse.error(&format!("expected {}", $str)))
-                    }
+                pub fn parse_inner<'a>(parse: ParseStream<'a>) -> Result<&'a TokenStream> {
+                    parse.step(|cursor|{
+                        if let Some((entries, rest)) = cursor.group(Delimeter::$ident){
+                            cursor.set(rest);
+                            Ok(entries)
+                        } else{
+                            Err(parse.error(&format!("expected {}", $str)))
+                        }
+                    })
                 }
             }
 
@@ -351,17 +350,7 @@ macro_rules! define_delimeter {
                 }
             }
 
-            impl Display for $ident {
-                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                    f.write_str($str)
-                }
-            }
-
-            impl std::default::Default for $ident{
-                fn default() -> Self{
-                    Self
-                }
-            }
+            impl_token!($ident);
         )*
 
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -473,19 +462,4 @@ macro_rules! token {
     [%>] => { $crate::tokens::PercentRightArrow };
     [%:] => { $crate::tokens::PercentColon };
     [%:%:] => { $crate::tokens::DoublePercentColon };
-}
-
-macro_rules! match_tokens {
-    ($parse:expr; $($t:ty => $v:expr,)*; $def:expr $(,)? ) => {
-        'b: {
-            let parse = $parse.fork();
-            $(
-                if <$t as $crate::tokens::Token>::peek(parse.cursor()){
-                    #[allow(unreachable_code)]
-                    break 'b ($v)
-                }
-            )*
-            $def
-        }
-    };
 }

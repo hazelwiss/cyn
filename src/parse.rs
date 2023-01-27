@@ -1,69 +1,9 @@
 use crate::buffers::ParseBuffer;
-use crate::tokens::Token;
-use std::fmt::{self, Debug, Display};
+use crate::{Peek, Result};
+use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::path::PathBuf;
 
 pub type ParseStream<'a> = &'a ParseBuffer<'a>;
-
-#[derive(Debug)]
-pub struct Error {
-    msg: String,
-    file: Option<PathBuf>,
-    col: usize,
-    row: usize,
-}
-
-impl Error {
-    pub fn new(msg: impl Display, file: Option<PathBuf>, col: usize, row: usize) -> Self {
-        Self {
-            msg: msg.to_string(),
-            file,
-            col,
-            row,
-        }
-    }
-
-    pub fn msg(&self) -> &String {
-        &self.msg
-    }
-
-    pub fn file(&self) -> &Option<PathBuf> {
-        &self.file
-    }
-
-    pub fn col(&self) -> usize {
-        self.col
-    }
-
-    pub fn row(&self) -> usize {
-        self.row
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self {
-            msg,
-            file,
-            col,
-            row,
-        } = self;
-        let msg = format!("{row}:{col} {msg}");
-        f.write_str(&match file {
-            Some(file) => {
-                if let Some(file) = file.to_str() {
-                    format!("{file} {msg}")
-                } else {
-                    msg
-                }
-            }
-            _ => msg,
-        })
-    }
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
 
 pub trait Parse: Sized {
     fn parse(parse: ParseStream) -> Result<Self>;
@@ -73,7 +13,7 @@ impl<T: Parse> Parse for Option<T> {
     fn parse(parse: ParseStream) -> Result<Self> {
         let fork = parse.fork();
         if let Ok(parsed) = fork.parse::<T>() {
-            parse.update_cursor(fork.cursor());
+            parse.set(fork);
             Ok(Some(parsed))
         } else {
             Ok(None)
@@ -81,17 +21,23 @@ impl<T: Parse> Parse for Option<T> {
     }
 }
 
+impl<T: Parse> Parse for Box<T> {
+    fn parse(parse: ParseStream) -> Result<Self> {
+        Ok(Self::new(T::parse(parse)?))
+    }
+}
+
 #[derive(Debug)]
-pub struct Punctuated<T, P: Token> {
+pub struct Punctuated<T, P> {
     punctuated: Vec<T>,
     mark: PhantomData<P>,
     terminated: bool,
 }
 
-impl<T: Parse, P: Token> Punctuated<T, P> {
+impl<T: Parse, P: Peek + Parse> Punctuated<T, P> {
     pub fn parse_non_terminated(parse: ParseStream) -> Result<Self> {
         let mut vec = vec![];
-        if parse.peek::<T>() {
+        if parse.fork().expect::<T>() {
             loop {
                 vec.push(parse.parse()?);
                 if parse.peek::<P>() {
@@ -108,8 +54,17 @@ impl<T: Parse, P: Token> Punctuated<T, P> {
         })
     }
 
-    pub fn parse_terminated(_parse: ParseStream) -> Result<Self> {
-        unimplemented!()
+    pub fn parse_single_non_terminated(parse: ParseStream) -> Result<Self> {
+        let mut vec = vec![];
+        vec.push(parse.parse()?);
+        while parse.peek::<P>() {
+            vec.push(parse.parse()?);
+        }
+        Ok(Self {
+            punctuated: vec,
+            mark: Default::default(),
+            terminated: false,
+        })
     }
 }
 
@@ -117,8 +72,8 @@ impl<T: Parse, P: Token> Punctuated<T, P> {
 macro_rules! delim {
     ($ty:ident, $out:ident in $parse:expr) => {{
         $out = {
-            let parse = $crate::tokens::$ty::parse_inner($parse)?;
-            let cursor = unsafe { $crate::buffers::Cursor::new(parse.as_ptr(), parse.len()) };
+            let ts = $crate::tokens::$ty::parse_inner($parse)?;
+            let cursor = unsafe { $crate::buffers::Cursor::from_token_stream(&ts) };
             $crate::buffers::ParseBuffer::new(cursor)
         };
         Ok($crate::tokens::$ty)
@@ -146,11 +101,25 @@ macro_rules! bracketed {
     };
 }
 
+pub fn parse_into_vec<T: Parse>(parse: ParseStream) -> Vec<T> {
+    let mut vec = vec![];
+    loop {
+        let fork = parse.fork();
+        if let Ok(p) = fork.parse::<T>() {
+            parse.set(fork);
+            vec.push(p);
+        } else {
+            break;
+        }
+    }
+    vec
+}
+
 mod quote {
     use super::*;
     use crate::ToTokens;
 
-    impl<T: ToTokens, P: Token + ToTokens> ToTokens for Punctuated<T, P> {
+    impl<T: ToTokens, P: Default + ToTokens> ToTokens for Punctuated<T, P> {
         fn to_tokens(&self, tokens: &mut crate::TokenStream) {
             let p = P::default();
             let mut iter = self.punctuated.iter();

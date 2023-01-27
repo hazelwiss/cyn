@@ -1,9 +1,8 @@
-use std::cell::Cell;
-
-use crate::parse::{Error, Result};
-use crate::tokens::{self, Literal, Punct};
-use crate::tokens::{Delimeter, TokenTree, TokenTreeTy};
+use crate::tokens::{self, Literal, Punct, TokenCell};
+use crate::tokens::{Delimeter, TokenTree};
+use crate::{Error, Result, TokenStream};
 use peeking_take_while::PeekableExt;
+use std::cell::Cell;
 
 enum ParsedTy {
     Ident(String),
@@ -164,32 +163,32 @@ fn split(mut iter: impl Iterator<Item = char>) -> Result<Vec<Parsed>> {
     Ok(vec)
 }
 
-pub(super) fn parse_str(str: &str) -> Result<Box<[TokenTree]>> {
+pub(super) fn parse_str(str: &str) -> Result<Box<[TokenCell]>> {
     let split = split(str.chars())?;
     parsed_into_boxed_entries(split)
 }
 
-fn parsed_into_boxed_entries(parsed: Vec<Parsed>) -> Result<Box<[TokenTree]>> {
-    fn into_boxed(mut iter: impl Iterator<Item = Parsed>) -> Result<Box<[TokenTree]>> {
+fn parsed_into_boxed_entries(parsed: Vec<Parsed>) -> Result<Box<[TokenCell]>> {
+    fn into_boxed(mut iter: impl Iterator<Item = Parsed>) -> Result<Box<[TokenCell]>> {
         let mut vec = vec![];
         while let Some(next) = iter.next() {
-            vec.push(TokenTree {
+            vec.push(TokenCell {
                 col: next.col,
                 row: next.row,
-                ty: match next.ty {
-                    ParsedTy::Ident(ident) => TokenTreeTy::Ident(ident),
-                    ParsedTy::Literal(lit) => TokenTreeTy::Literal(lit),
-                    ParsedTy::Punct(punct) => TokenTreeTy::Punct(punct),
-                    ParsedTy::Group(group) => TokenTreeTy::Group(
+                tt: match next.ty {
+                    ParsedTy::Ident(ident) => TokenTree::Ident(ident),
+                    ParsedTy::Literal(lit) => TokenTree::Literal(lit),
+                    ParsedTy::Punct(punct) => TokenTree::Punct(punct),
+                    ParsedTy::Group(group) => TokenTree::Group(
                         group,
-                        parsed_into_boxed_entries(
+                        TokenStream::new(parsed_into_boxed_entries(
                             iter.by_ref()
                                 .take_while(|cur| match cur.ty {
                                     ParsedTy::End(end) if group == end => false,
                                     _ => true,
                                 })
                                 .collect(),
-                        )?,
+                        )?),
                     ),
                     ParsedTy::End(_) => {
                         return Err(Error::new(

@@ -1,4 +1,4 @@
-use crate::tokens::{Delimeter, TokenTree, TokenTreeTy};
+use crate::tokens::{Delimeter, TokenTree};
 use crate::TokenStream;
 
 pub trait ToTokens {
@@ -11,6 +11,20 @@ impl<T: ToTokens> ToTokens for Option<T> {
             Some(some) => some.to_tokens(tokens),
             None => {}
         }
+    }
+}
+
+impl<T: ToTokens> ToTokens for Vec<T> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        for elem in self {
+            elem.to_tokens(tokens)
+        }
+    }
+}
+
+impl<T: ToTokens> ToTokens for Box<T> {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        self.as_ref().to_tokens(tokens)
     }
 }
 
@@ -28,12 +42,9 @@ impl ToTokens for Delimited {
 fn delimited<T: ToTokens>(inner: &T, delim: Delimeter) -> Delimited {
     let mut ts = TokenStream::new_empty();
     inner.to_tokens(&mut ts);
-    let tt = TokenTree {
-        col: 0,
-        row: 0,
-        ty: TokenTreeTy::Group(delim, ts.into_inner()),
-    };
-    Delimited { tt }
+    Delimited {
+        tt: TokenTree::Group(delim, ts),
+    }
 }
 
 pub fn parenthesized<T: ToTokens>(inner: &T) -> Delimited {

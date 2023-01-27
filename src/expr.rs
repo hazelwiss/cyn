@@ -13,6 +13,7 @@ ast_enum! {
         Postfix(ExprPostfix),
         Sizeof(ExprSizeof),
         Alignof(ExprAlignof),
+        Comma(ExprComma),
     }
 }
 
@@ -104,46 +105,50 @@ ast_struct! {
 }
 
 ast_struct! {
-    pub struct ExprSizeof{
+    pub struct ExprSizeof {
         pub sizeof: token![sizeof],
         pub expr: Box<Expr>,
     }
 }
 
 ast_struct! {
-    pub struct ExprAlignof{
+    pub struct ExprAlignof {
         pub alignof: token![_Alignof],
         pub paren: tokens::Paren,
         pub ty_name: Ident,
     }
 }
 
-use crate::Parse;
-use crate::ParseStream;
-use crate::Result;
-
-impl Parse for Expr {
-    fn parse(parse: ParseStream) -> Result<Self> {
-        parsing::parse_expr(parse)
+ast_struct! {
+    pub struct ExprComma {
+        pub left: Box<Expr>,
+        pub comma: token![,],
+        pub right: Box<Expr>,
     }
 }
 
 mod parsing {
     use super::*;
     use crate::lit::Lit;
-    use crate::op::{AssignOp, UnOp};
-    use crate::parse::{ParseStream, Result};
-    use crate::tokens;
+    use crate::op::{AssignOp, BiOp, PostOp, UnOp};
+    use crate::parse::ParseStream;
+    use crate::{tokens, Ident, Parse, Result};
 
-    pub fn parse_expr(parse: ParseStream) -> Result<Expr> {
-        parse_comma(parse)
+    impl Parse for Expr {
+        fn parse(parse: ParseStream) -> Result<Self> {
+            parse_comma(parse)
+        }
     }
 
     fn parse_primary(parse: ParseStream) -> Result<Expr> {
-        Ok(if let Ok(ident) = parse.parse::<Ident>() {
-            Expr::Ident(ExprIdent { ident })
-        } else if let Ok(lit) = parse.parse::<Lit>() {
-            Expr::Lit(ExprLit { lit })
+        Ok(if parse.peek::<Ident>() {
+            Expr::Ident(ExprIdent {
+                ident: parse.parse()?,
+            })
+        } else if parse.peek::<Lit>() {
+            Expr::Lit(ExprLit {
+                lit: parse.parse()?,
+            })
         } else if parse.peek::<tokens::Paren>() {
             let content;
             let paren = parenthesized!(content in parse)?;
@@ -170,43 +175,43 @@ mod parsing {
         } else {
             let mut expr = parse_primary(parse)?;
             'l: loop {
-                match_tokens!(
-                    parse;
-                    token![.] => {
-                        expr = Expr::Member(ExprMember{
-                            body: Box::new(expr),
-                            dot: parse.parse()?,
-                            member: parse.parse()?,
-                        })
-                    },
-                    token![->] => {
-                        expr = Expr::MemberPtr(ExprMemberPtr{
-                            body: Box::new(expr),
-                            arrow: parse.parse()?,
-                            member: parse.parse()?,
-                        })
-                    },
-                    token![++] => {
-                        expr = Expr::Postfix(ExprPostfix {
-                            expr: Box::new(expr),
-                            op: PostOp::Inc(parse.parse()?),
-                        })
-                    },
-                    token![--] => {
-                        expr = Expr::Postfix(ExprPostfix {
-                            expr: Box::new(expr),
-                            op: PostOp::Dec(parse.parse()?),
-                        })
-                    },
-                    tokens::Bracket => {
-                        let content;
-                        expr = Expr::Subscript(ExprSubscript{ body: Box::new(expr), bracket: bracketed!(content in &parse)?, index: Box::new(content.parse()?) })
-                    },
-                    tokens::Paren => {
-                        expr = Expr::FnCall(ExprFnCall{ body: Box::new(expr), args: parse.parse()? })
-                    },
-                    ; break 'l,
-                )
+                if parse.peek::<token![.]>() {
+                    expr = Expr::Member(ExprMember {
+                        body: Box::new(expr),
+                        dot: parse.parse()?,
+                        member: parse.parse()?,
+                    })
+                } else if parse.peek::<token![->]>() {
+                    expr = Expr::MemberPtr(ExprMemberPtr {
+                        body: Box::new(expr),
+                        arrow: parse.parse()?,
+                        member: parse.parse()?,
+                    })
+                } else if parse.peek::<token![++]>() {
+                    expr = Expr::Postfix(ExprPostfix {
+                        expr: Box::new(expr),
+                        op: PostOp::Inc(parse.parse()?),
+                    })
+                } else if parse.peek::<token![--]>() {
+                    expr = Expr::Postfix(ExprPostfix {
+                        expr: Box::new(expr),
+                        op: PostOp::Dec(parse.parse()?),
+                    })
+                } else if parse.peek::<tokens::Bracket>() {
+                    let content;
+                    expr = Expr::Subscript(ExprSubscript {
+                        body: Box::new(expr),
+                        bracket: bracketed!(content in &parse)?,
+                        index: Box::new(content.parse()?),
+                    })
+                } else if parse.peek::<tokens::Paren>() {
+                    expr = Expr::FnCall(ExprFnCall {
+                        body: Box::new(expr),
+                        args: parse.parse()?,
+                    })
+                } else {
+                    break 'l;
+                }
             }
             expr
         })
@@ -214,30 +219,37 @@ mod parsing {
 
     fn parse_unary(parse: ParseStream) -> Result<Expr> {
         Ok({
-            let op = match_tokens!(
-                parse;
-                token![++] => UnOp::PreInc(parse.parse()?),
-                token![--] => UnOp::PreDec(parse.parse()?),
-                token![&] => UnOp::Addr(parse.parse()?),
-                token![*] => UnOp::Deref(parse.parse()?),
-                token![+] => UnOp::Promote(parse.parse()?),
-                token![-] => UnOp::Neg(parse.parse()?),
-                token![~] => UnOp::Inv(parse.parse()?),
-                token![!] => UnOp::Not(parse.parse()?),
-                token![sizeof] => return Ok(Expr::Sizeof(ExprSizeof {
+            let op = if parse.peek::<token![++]>() {
+                UnOp::PreInc(parse.parse()?)
+            } else if parse.peek::<token![--]>() {
+                UnOp::PreDec(parse.parse()?)
+            } else if parse.peek::<token![&]>() {
+                UnOp::Addr(parse.parse()?)
+            } else if parse.peek::<token![*]>() {
+                UnOp::Deref(parse.parse()?)
+            } else if parse.peek::<token![+]>() {
+                UnOp::Promote(parse.parse()?)
+            } else if parse.peek::<token![-]>() {
+                UnOp::Neg(parse.parse()?)
+            } else if parse.peek::<token![~]>() {
+                UnOp::Inv(parse.parse()?)
+            } else if parse.peek::<token![!]>() {
+                UnOp::Not(parse.parse()?)
+            } else if parse.peek::<token![sizeof]>() {
+                return Ok(Expr::Sizeof(ExprSizeof {
                     sizeof: parse.parse()?,
-                    expr: Box::new(parse.parse()?)
-                })),
-                token![_Alignof] => {
-                    let content;
-                    return Ok(Expr::Alignof(ExprAlignof{
-                        alignof: parse.parse()?,
-                        paren: parenthesized!(content in &parse)?,
-                        ty_name: content.parse()?
-                    }))
-                },
-                ; return parse_postfix(&parse)
-            );
+                    expr: parse.parse()?,
+                }));
+            } else if parse.peek::<token![_Alignof]>() {
+                let content;
+                return Ok(Expr::Alignof(ExprAlignof {
+                    alignof: parse.parse()?,
+                    paren: parenthesized!(content in &parse)?,
+                    ty_name: content.parse()?,
+                }));
+            } else {
+                return parse_postfix(&parse);
+            };
             Expr::Unary(ExprUnary {
                 op: op,
                 expr: Box::new(parse_cast(parse)?),
@@ -261,13 +273,15 @@ mod parsing {
     fn parse_mul(parse: ParseStream) -> Result<Expr> {
         let cast = parse_cast(parse)?;
         Ok(Expr::Binary(ExprBinary {
-            op: match_tokens!(
-                parse;
-                token![*] => BiOp::Mul(parse.parse()?),
-                token![/] => BiOp::Div(parse.parse()?),
-                token![%] => BiOp::Mod(parse.parse()?),
-                ; return Ok(cast)
-            ),
+            op: if parse.peek::<token![*]>() {
+                BiOp::Mul(parse.parse()?)
+            } else if parse.peek::<token![/]>() {
+                BiOp::Div(parse.parse()?)
+            } else if parse.peek::<token![%]>() {
+                BiOp::Mod(parse.parse()?)
+            } else {
+                return Ok(cast);
+            },
             lhs: Box::new(cast),
             rhs: Box::new(parse_mul(parse)?),
         }))
@@ -276,12 +290,13 @@ mod parsing {
     fn parse_add(parse: ParseStream) -> Result<Expr> {
         let mul = parse_mul(parse)?;
         Ok(Expr::Binary(ExprBinary {
-            op: match_tokens!(
-                parse;
-                token![+] => BiOp::Add(parse.parse()?),
-                token![-] => BiOp::Sub(parse.parse()?),
-                ; return Ok(mul)
-            ),
+            op: if parse.peek::<token![+]>() {
+                BiOp::Add(parse.parse()?)
+            } else if parse.peek::<token![-]>() {
+                BiOp::Sub(parse.parse()?)
+            } else {
+                return Ok(mul);
+            },
             lhs: Box::new(mul),
             rhs: Box::new(parse_add(parse)?),
         }))
@@ -290,12 +305,13 @@ mod parsing {
     fn parse_bwshift(parse: ParseStream) -> Result<Expr> {
         let add = parse_add(parse)?;
         Ok(Expr::Binary(ExprBinary {
-            op: match_tokens!(
-                parse;
-                token![<<] => BiOp::LShft(parse.parse()?),
-                token![>>] => BiOp::RShft(parse.parse()?),
-                ; return Ok(add)
-            ),
+            op: if parse.peek::<token![<<]>() {
+                BiOp::LShft(parse.parse()?)
+            } else if parse.peek::<token![>>]>() {
+                BiOp::RShft(parse.parse()?)
+            } else {
+                return Ok(add);
+            },
             lhs: Box::new(add),
             rhs: Box::new(parse_bwshift(parse)?),
         }))
@@ -304,14 +320,17 @@ mod parsing {
     fn parse_relational(parse: ParseStream) -> Result<Expr> {
         let shift = parse_bwshift(parse)?;
         Ok(Expr::Binary(ExprBinary {
-            op: match_tokens!(
-                parse;
-                token![<] => BiOp::Less(parse.parse()?),
-                token![>] => BiOp::Greater(parse.parse()?),
-                token![<=] => BiOp::LessEq(parse.parse()?),
-                token![>=] => BiOp::GreaterEq(parse.parse()?),
-                ; return Ok(shift)
-            ),
+            op: if parse.peek::<token![<]>() {
+                BiOp::Less(parse.parse()?)
+            } else if parse.peek::<token![>]>() {
+                BiOp::Greater(parse.parse()?)
+            } else if parse.peek::<token![<=]>() {
+                BiOp::LessEq(parse.parse()?)
+            } else if parse.peek::<token![>=]>() {
+                BiOp::GreaterEq(parse.parse()?)
+            } else {
+                return Ok(shift);
+            },
             lhs: Box::new(shift),
             rhs: Box::new(parse_relational(parse)?),
         }))
@@ -320,12 +339,13 @@ mod parsing {
     fn parse_eq(parse: ParseStream) -> Result<Expr> {
         let relational = parse_relational(parse)?;
         Ok(Expr::Binary(ExprBinary {
-            op: match_tokens!(
-                parse;
-                token![==] => BiOp::Eq(parse.parse()?),
-                token![!=] => BiOp::NotEq(parse.parse()?),
-                ; return Ok(relational)
-            ),
+            op: if parse.peek::<token![==]>() {
+                BiOp::Eq(parse.parse()?)
+            } else if parse.peek::<token![!=]>() {
+                BiOp::NotEq(parse.parse()?)
+            } else {
+                return Ok(relational);
+            },
             lhs: Box::new(relational),
             rhs: Box::new(parse_eq(parse)?),
         }))
@@ -414,26 +434,36 @@ mod parsing {
     }
 
     fn parse_assign(parse: ParseStream) -> Result<Expr> {
-        let clone = parse.fork();
-        if let Ok(unary) = parse_unary(&clone) {
+        let fork = parse.fork();
+        if let Ok(unary) = parse_unary(&fork) {
+            let op = if fork.peek::<token![=]>() {
+                AssignOp::Eq(fork.parse()?)
+            } else if fork.peek::<token![*=]>() {
+                AssignOp::Mul(fork.parse()?)
+            } else if fork.peek::<token![/=]>() {
+                AssignOp::Div(fork.parse()?)
+            } else if fork.peek::<token![%=]>() {
+                AssignOp::Mod(fork.parse()?)
+            } else if fork.peek::<token![+=]>() {
+                AssignOp::Add(fork.parse()?)
+            } else if fork.peek::<token![-=]>() {
+                AssignOp::Sub(fork.parse()?)
+            } else if fork.peek::<token![<<=]>() {
+                AssignOp::LShft(fork.parse()?)
+            } else if fork.peek::<token![>>=]>() {
+                AssignOp::RShft(fork.parse()?)
+            } else if fork.peek::<token![&=]>() {
+                AssignOp::And(fork.parse()?)
+            } else if fork.peek::<token![^=]>() {
+                AssignOp::Xor(fork.parse()?)
+            } else if fork.peek::<token![|=]>() {
+                AssignOp::Or(fork.parse()?)
+            } else {
+                return parse_cond(&parse);
+            };
             let lhs = Box::new(unary);
-            let op = match_tokens!(
-                clone;
-                token![=] => AssignOp::Eq(parse.parse()?),
-                token![*=] => AssignOp::Mul(parse.parse()?),
-                token![/=] => AssignOp::Div(parse.parse()?),
-                token![%=] => AssignOp::Mod(parse.parse()?),
-                token![+=] => AssignOp::Add(parse.parse()?),
-                token![-=] => AssignOp::Sub(parse.parse()?),
-                token![<<=] => AssignOp::LShft(parse.parse()?),
-                token![>>=] => AssignOp::RShft(parse.parse()?),
-                token![&=] => AssignOp::And(parse.parse()?),
-                token![^=] => AssignOp::Xor(parse.parse()?),
-                token![|=] => AssignOp::Or(parse.parse()?),
-                ; return parse_cond(&parse)
-            );
-            let rhs = Box::new(parse_assign(&clone)?);
-            parse.update_cursor(clone.cursor());
+            let rhs = Box::new(parse_assign(&fork)?);
+            parse.set(fork);
             Ok(Expr::Assing(ExprAssign { lhs, op, rhs }))
         } else {
             parse_cond(parse)
@@ -441,16 +471,16 @@ mod parsing {
     }
 
     fn parse_comma(parse: ParseStream) -> Result<Expr> {
-        let assingment_expr = parse_assign(parse)?;
-        Ok(if parse.peek::<token![,]>() {
-            //Expr::Comma(Comma {
-            //    l: Box::new(assingment_expr),
-            //    r: Box::new(parse_comma(parse)?),
-            //})
-            todo!()
+        let expr = parse_assign(parse)?;
+        if parse.peek::<token![,]>() {
+            Ok(Expr::Comma(ExprComma {
+                left: Box::new(expr),
+                comma: parse.parse()?,
+                right: parse.parse()?,
+            }))
         } else {
-            assingment_expr
-        })
+            Ok(expr)
+        }
     }
 }
 
@@ -474,6 +504,7 @@ mod quote {
                 Expr::Postfix(e) => e.to_tokens(tokens),
                 Expr::Sizeof(e) => e.to_tokens(tokens),
                 Expr::Alignof(e) => e.to_tokens(tokens),
+                Expr::Comma(e) => e.to_tokens(tokens),
             }
         }
     }
@@ -592,6 +623,15 @@ mod quote {
             } = self;
             alignof.to_tokens(tokens);
             to_tokens::parenthesized(ty_name).to_tokens(tokens);
+        }
+    }
+
+    impl ToTokens for ExprComma {
+        fn to_tokens(&self, tokens: &mut crate::TokenStream) {
+            let Self { left, comma, right } = self;
+            left.to_tokens(tokens);
+            comma.to_tokens(tokens);
+            right.to_tokens(tokens);
         }
     }
 }

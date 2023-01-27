@@ -17,46 +17,66 @@ ast_struct! {
     }
 }
 
+use crate::buffers::Cursor;
+use crate::tokens::Token;
+
+impl Token for Lit {
+    fn peek(cursor: Cursor) -> bool {
+        cursor.literal().is_some()
+    }
+
+    fn display() -> &'static str {
+        "literal"
+    }
+}
+
 use crate::tokens::Literal;
 use crate::{Parse, ParseStream, Result};
 
 impl Parse for Lit {
     fn parse(parse: ParseStream) -> Result<Self> {
-        if let Some(lit) = parse.fork().literal() {
-            Ok(match lit {
-                Literal::Str(_) => Self::Str(parse.parse()?),
-                Literal::Int(_) => Self::Int(parse.parse()?),
-                Literal::Float(_) => todo!(),
-            })
-        } else {
-            Err(parse.error("expected literal"))
-        }
+        parse.step(|cursor| {
+            if let Some((lit, rest)) = cursor.literal() {
+                cursor.set(rest);
+                Ok(match lit.clone() {
+                    Literal::Str(str) => Self::Str(LitStr { str }),
+                    Literal::Int(value) => Self::Int(LitInt { value }),
+                    Literal::Float(_) => unimplemented!(),
+                })
+            } else {
+                Err(parse.error("expected literal"))
+            }
+        })
     }
 }
 
 impl Parse for LitInt {
     fn parse(parse: ParseStream) -> Result<Self> {
-        if let Some(Literal::Int(value)) = parse.literal() {
-            Ok(Self { value })
-        } else {
-            Err(parse.error("expected integer literal"))
-        }
+        parse.step(|cursor| match cursor.literal() {
+            Some((Literal::Int(int), next)) => {
+                cursor.set(next);
+                Ok(Self { value: *int })
+            }
+            _ => Err(parse.error("expected integer literal")),
+        })
     }
 }
 
 impl Parse for LitStr {
     fn parse(parse: ParseStream) -> Result<Self> {
-        if let Some(Literal::Str(str)) = parse.literal() {
-            Ok(Self { str })
-        } else {
-            Err(parse.error("expected string literal"))
-        }
+        parse.step(|cursor| match cursor.literal() {
+            Some((Literal::Str(str), next)) => {
+                cursor.set(next);
+                Ok(Self { str: str.clone() })
+            }
+            _ => Err(parse.error("expected integer literal")),
+        })
     }
 }
 
 mod quote {
-    use super::*;
-    use crate::tokens::{Literal, TokenTree, TokenTreeTy};
+    use super::{Lit, LitInt, LitStr};
+    use crate::tokens::{Literal, TokenTree};
     use crate::{ToTokens, TokenStream};
 
     impl ToTokens for Lit {
@@ -70,21 +90,13 @@ mod quote {
 
     impl ToTokens for LitInt {
         fn to_tokens(&self, tokens: &mut TokenStream) {
-            tokens.extend_one(TokenTree {
-                col: 0,
-                row: 0,
-                ty: TokenTreeTy::Literal(Literal::Int(self.value)),
-            });
+            tokens.extend_one(TokenTree::Literal(Literal::Int(self.value)));
         }
     }
 
     impl ToTokens for LitStr {
         fn to_tokens(&self, tokens: &mut TokenStream) {
-            tokens.extend_one(TokenTree {
-                col: 0,
-                row: 0,
-                ty: TokenTreeTy::Literal(Literal::Str(self.str.clone())),
-            });
+            tokens.extend_one(TokenTree::Literal(Literal::Str(self.str.clone())));
         }
     }
 }
