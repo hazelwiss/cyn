@@ -55,7 +55,13 @@ fn split(mut iter: impl Iterator<Item = char>) -> Result<Vec<Parsed>> {
     }
     macro_rules! e {
         ($e:expr) => {
-            Err(Error::new($e, None, col_old.get(), row_old.get()))
+            Err(Error::new_with_pos(
+                $e,
+                None,
+                None,
+                col_old.get(),
+                row_old.get(),
+            ))
         };
     }
     while let Some(peek) = iter.peek() {
@@ -169,40 +175,47 @@ pub(super) fn parse_str(str: &str) -> Result<Box<[TokenCell]>> {
 }
 
 fn parsed_into_boxed_entries(parsed: Vec<Parsed>) -> Result<Box<[TokenCell]>> {
-    fn into_boxed(mut iter: impl Iterator<Item = Parsed>) -> Result<Box<[TokenCell]>> {
+    fn into_boxed(
+        iter: &mut impl Iterator<Item = Parsed>,
+        group_end: Option<Delimeter>,
+    ) -> Result<Box<[TokenCell]>> {
         let mut vec = vec![];
         while let Some(next) = iter.next() {
-            vec.push(TokenCell {
-                col: next.col,
-                row: next.row,
-                tt: match next.ty {
+            vec.push(TokenCell::new_with_pos(
+                match next.ty {
                     ParsedTy::Ident(ident) => TokenTree::Ident(ident),
                     ParsedTy::Literal(lit) => TokenTree::Literal(lit),
                     ParsedTy::Punct(punct) => TokenTree::Punct(punct),
-                    ParsedTy::Group(group) => TokenTree::Group(
-                        group,
-                        TokenStream::new(parsed_into_boxed_entries(
-                            iter.by_ref()
-                                .take_while(|cur| match cur.ty {
-                                    ParsedTy::End(end) if group == end => false,
-                                    _ => true,
-                                })
-                                .collect(),
-                        )?),
-                    ),
-                    ParsedTy::End(_) => {
-                        return Err(Error::new(
-                            format!("{}:{} unexpected group delimiter.", next.row, next.col),
+                    ParsedTy::Group(group) => {
+                        TokenTree::Group(group, TokenStream::new(into_boxed(iter, Some(group))?))
+                    }
+                    ParsedTy::End(delim) => {
+                        if let Some(group_end) = group_end {
+                            if delim == group_end {
+                                return Ok(vec.into_boxed_slice());
+                            }
+                        }
+                        return Err(Error::new_with_pos(
+                            format!(
+                                "unexpected group delimiter '{}'.",
+                                match delim {
+                                    Delimeter::Paren => ')',
+                                    Delimeter::Brace => '}',
+                                    Delimeter::Bracket => ']',
+                                }
+                            ),
+                            None,
                             None,
                             next.col,
                             next.row,
-                        ))
+                        ));
                     }
                 },
-            })
+                next.col,
+                next.row,
+            ))
         }
         Ok(vec.into_boxed_slice())
     }
-    let iter = parsed.into_iter();
-    into_boxed(iter)
+    into_boxed(&mut parsed.into_iter(), None)
 }

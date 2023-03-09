@@ -1,8 +1,10 @@
 use crate::buffers::Cursor;
-use crate::tokens::Token;
+use crate::tokens::{is_keyword, Token};
 
-#[derive(Debug, Clone)]
-pub struct Ident(String);
+ast_struct! {
+    #[derive(Debug, Clone)]
+    pub struct Ident(String);
+}
 
 impl Ident {
     pub fn new(ident: String) -> Option<Self> {
@@ -14,10 +16,7 @@ impl Ident {
     }
 
     fn valid_ident(ident: &str) -> bool {
-        match ident {
-            "while" | "if" | "for" => false,
-            _ => true,
-        }
+        !is_keyword(ident)
     }
 }
 

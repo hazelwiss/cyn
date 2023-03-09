@@ -1,4 +1,4 @@
-use crate::{Declr, Fn, Parse, ParseStream, Result};
+use crate::{tokens, Declr, Fn, Parse, ParseStream, Result, Ty};
 
 pub enum Item {
     Declr(Declr),
@@ -8,12 +8,18 @@ pub enum Item {
 impl Parse for Item {
     fn parse(parse: ParseStream) -> Result<Self> {
         let fork = parse.fork();
-        Ok(if let Ok(func) = fork.parse::<Fn>() {
-            parse.set(fork);
-            Self::Fn(func)
-        } else {
-            Self::Declr(parse.parse()?)
-        })
+        fork.parse::<Option<Ty>>()?;
+        loop {
+            if fork.peek::<token![;]>() {
+                break Ok(Self::Declr(parse.parse()?));
+            } else if fork.peek::<tokens::Paren>() {
+                break Ok(Self::Fn(parse.parse()?));
+            } else if fork.is_empty() {
+                break Err(parse.error("expected item"));
+            } else {
+                fork.skip();
+            }
+        }
     }
 }
 

@@ -32,7 +32,7 @@ impl Parse for Block {
 
 impl Parse for BlockItem {
     fn parse(parse: ParseStream) -> Result<Self> {
-        Ok(if parse.fork().parse::<Ty>().is_ok() {
+        Ok(if parse.fork().expect::<Ty>() {
             Self::Declr(parse.parse()?)
         } else {
             Self::Stmnt(parse.parse()?)

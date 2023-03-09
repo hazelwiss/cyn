@@ -40,6 +40,8 @@ impl Parse for Stmnt {
             Self::Break(parse.parse()?)
         } else if parse.peek::<token![return]>() {
             Self::Return(parse.parse()?)
+        } else if parse.peek::<token![while]>() {
+            Self::While(parse.parse()?)
         } else {
             if parse.peek::<tokens::Brace>() {
                 Self::Block(parse.parse()?)

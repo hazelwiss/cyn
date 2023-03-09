@@ -17,6 +17,7 @@ pub mod expr;
 pub mod file;
 pub mod func;
 pub mod ident;
+pub mod initializer;
 pub mod item;
 pub mod jump;
 pub mod labeled;
@@ -24,6 +25,7 @@ pub mod lit;
 pub mod loops;
 pub mod op;
 pub mod selection;
+pub mod span;
 pub mod specifier;
 pub mod stmnt;
 pub mod to_tokens;
@@ -36,7 +38,7 @@ pub use buffers::{ParseBuffer, TokenStream};
 pub use declr::Declr;
 pub use error::Error;
 pub use expr::Expr;
-pub use func::{Fn, FnArgs, FnParam, FnParamNamed, FnParamUnnamed, FnParams};
+pub use func::{Fn, FnArgs, FnParam, FnParamNamed, FnParams};
 pub use ident::Ident;
 pub use item::Item;
 pub use jump::{Break, Continue, Goto, Return};
@@ -50,7 +52,7 @@ pub use stmnt::Stmnt;
 pub use to_tokens::ToTokens;
 pub use ty::{Ptr, Ty};
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, Error<'static>>;
 
 pub fn parse_file(input: impl AsRef<str>) -> file::File {
     let _input = input.as_ref();

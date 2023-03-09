@@ -3,6 +3,7 @@ ast_enum! {
         Ident(ExprIdent),
         Lit(ExprLit),
         Unary(ExprUnary),
+        Cast(ExprCast),
         Binary(ExprBinary),
         Paren(ExprParen),
         Assing(ExprAssign),
@@ -11,18 +12,19 @@ ast_enum! {
         Member(ExprMember),
         MemberPtr(ExprMemberPtr),
         Postfix(ExprPostfix),
+        Initialize(ExprInitialize),
         Sizeof(ExprSizeof),
         Alignof(ExprAlignof),
+        Ternary(ExprTernary),
         Comma(ExprComma),
     }
 }
 
 use crate::func::FnArgs;
+use crate::initializer::InitializerList;
 use crate::op::{AssignOp, PostOp};
 use crate::op::{BiOp, UnOp};
-use crate::tokens;
-use crate::Ident;
-use crate::Lit;
+use crate::{tokens, Ident, Lit, Ty};
 
 ast_struct! {
     pub struct ExprIdent {
@@ -39,6 +41,14 @@ ast_struct! {
 ast_struct! {
     pub struct ExprUnary {
         pub op: UnOp,
+        pub expr: Box<Expr>,
+    }
+}
+
+ast_struct! {
+    pub struct ExprCast {
+        pub paren: tokens::Paren,
+        pub ty: Ty,
         pub expr: Box<Expr>,
     }
 }
@@ -105,6 +115,14 @@ ast_struct! {
 }
 
 ast_struct! {
+    pub struct ExprInitialize {
+        pub paren: tokens::Paren,
+        pub ty: Ty,
+        pub init_list: InitializerList,
+    }
+}
+
+ast_struct! {
     pub struct ExprSizeof {
         pub sizeof: token![sizeof],
         pub expr: Box<Expr>,
@@ -120,6 +138,16 @@ ast_struct! {
 }
 
 ast_struct! {
+    pub struct ExprTernary {
+        pub cond: Box<Expr>,
+        pub question_mark: token![?],
+        pub true_expr: Box<Expr>,
+        pub colon: token![:],
+        pub false_expr: Box<Expr>,
+    }
+}
+
+ast_struct! {
     pub struct ExprComma {
         pub left: Box<Expr>,
         pub comma: token![,],
@@ -127,7 +155,7 @@ ast_struct! {
     }
 }
 
-mod parsing {
+pub(crate) mod parsing {
     use super::*;
     use crate::lit::Lit;
     use crate::op::{AssignOp, BiOp, PostOp, UnOp};
@@ -258,13 +286,13 @@ mod parsing {
     }
 
     fn parse_cast(parse: ParseStream) -> Result<Expr> {
-        if false {
-            //let content;
-            //let paren = parenthesized!(content in parse)?;
-            //let ty = content.parse()?;
-            //let expr = Box::new(parse.parse()?);
-            //Ok(Expr::Cast(Cast { paren, ty, expr }))
-            todo!()
+        if parse.peek::<tokens::Paren>() {
+            let content;
+            Ok(Expr::Cast(ExprCast {
+                paren: parenthesized!(content in parse)?,
+                ty: content.parse()?,
+                expr: Box::new(parse_cast(parse)?),
+            }))
         } else {
             parse_unary(parse)
         }
@@ -419,21 +447,19 @@ mod parsing {
     fn parse_cond(parse: ParseStream) -> Result<Expr> {
         let cond_expr = parse_lor(parse)?;
         Ok(if parse.peek::<token![?]>() {
-            //let true_expr = Box::new(parse.parse()?);
-            //let colon = parse.parse::<token![:]>()?;
-            //let false_expr = Box::new(parse_cond(parse)?);
-            //Expr::Ternary(Ternary {
-            //    cond_expr: Box::new(cond_expr),
-            //    true_expr,
-            //    false_expr,
-            //})
-            todo!()
+            Expr::Ternary(ExprTernary {
+                cond: Box::new(cond_expr),
+                question_mark: parse.parse()?,
+                true_expr: parse.parse()?,
+                colon: parse.parse()?,
+                false_expr: Box::new(parse_cond(parse)?),
+            })
         } else {
             cond_expr
         })
     }
 
-    fn parse_assign(parse: ParseStream) -> Result<Expr> {
+    pub(crate) fn parse_assign(parse: ParseStream) -> Result<Expr> {
         let fork = parse.fork();
         if let Ok(unary) = parse_unary(&fork) {
             let op = if fork.peek::<token![=]>() {
@@ -494,6 +520,7 @@ mod quote {
                 Expr::Ident(e) => e.to_tokens(tokens),
                 Expr::Lit(e) => e.to_tokens(tokens),
                 Expr::Unary(e) => e.to_tokens(tokens),
+                Expr::Cast(e) => e.to_tokens(tokens),
                 Expr::Binary(e) => e.to_tokens(tokens),
                 Expr::Paren(e) => e.to_tokens(tokens),
                 Expr::Assing(e) => e.to_tokens(tokens),
@@ -502,8 +529,10 @@ mod quote {
                 Expr::Member(e) => e.to_tokens(tokens),
                 Expr::MemberPtr(e) => e.to_tokens(tokens),
                 Expr::Postfix(e) => e.to_tokens(tokens),
+                Expr::Initialize(e) => e.to_tokens(tokens),
                 Expr::Sizeof(e) => e.to_tokens(tokens),
                 Expr::Alignof(e) => e.to_tokens(tokens),
+                Expr::Ternary(e) => e.to_tokens(tokens),
                 Expr::Comma(e) => e.to_tokens(tokens),
             }
         }
@@ -527,6 +556,14 @@ mod quote {
         fn to_tokens(&self, tokens: &mut crate::TokenStream) {
             let Self { op, expr } = self;
             op.to_tokens(tokens);
+            expr.to_tokens(tokens);
+        }
+    }
+
+    impl ToTokens for ExprCast {
+        fn to_tokens(&self, tokens: &mut crate::TokenStream) {
+            let Self { paren: _, ty, expr } = self;
+            to_tokens::parenthesized(ty).to_tokens(tokens);
             expr.to_tokens(tokens);
         }
     }
@@ -606,6 +643,18 @@ mod quote {
         }
     }
 
+    impl ToTokens for ExprInitialize {
+        fn to_tokens(&self, tokens: &mut crate::TokenStream) {
+            let Self {
+                paren: _,
+                ty,
+                init_list,
+            } = self;
+            to_tokens::parenthesized(ty).to_tokens(tokens);
+            init_list.to_tokens(tokens);
+        }
+    }
+
     impl ToTokens for ExprSizeof {
         fn to_tokens(&self, tokens: &mut crate::TokenStream) {
             let Self { sizeof, expr } = self;
@@ -623,6 +672,23 @@ mod quote {
             } = self;
             alignof.to_tokens(tokens);
             to_tokens::parenthesized(ty_name).to_tokens(tokens);
+        }
+    }
+
+    impl ToTokens for ExprTernary {
+        fn to_tokens(&self, tokens: &mut crate::TokenStream) {
+            let Self {
+                cond,
+                question_mark,
+                true_expr,
+                colon,
+                false_expr,
+            } = self;
+            cond.to_tokens(tokens);
+            question_mark.to_tokens(tokens);
+            true_expr.to_tokens(tokens);
+            colon.to_tokens(tokens);
+            false_expr.to_tokens(tokens);
         }
     }
 

@@ -1,16 +1,14 @@
-use crate::Item;
+use crate::{Item, Parse, ParseStream};
 
 pub struct File {
     pub declarations: Vec<Item>,
 }
 
-use crate::Parse;
-
 impl Parse for File {
-    fn parse(parse: crate::ParseStream) -> crate::Result<Self> {
+    fn parse(parse: ParseStream) -> crate::Result<Self> {
         let mut declarations = vec![];
         while !parse.is_empty() {
-            declarations.push(parse.parse()?);
+            declarations.push(parse.parse()?)
         }
         Ok(Self { declarations })
     }

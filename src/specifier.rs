@@ -1,5 +1,3 @@
-use crate::Ident;
-
 ast_enum_simple! {
     pub enum TypeQualifier {
         Const(token![const]),
@@ -46,6 +44,12 @@ ast_enum_simple! {
     }
 }
 
+ast_struct! {
+    pub struct StorageClassList {
+        pub items: Vec<StorageClass>,
+    }
+}
+
 ast_enum_simple! {
     pub enum FunctionSpecifier {
         Inline(token![inline]),
@@ -78,44 +82,73 @@ impl Parse for AlignmentSpecifier {
     }
 }
 
-impl Parse for TypeQualifierList {
-    fn parse(parse: ParseStream) -> Result<Self> {
-        let items = parse_into_vec(parse);
-        if items.is_empty() {
-            Err(parse.error("empty type qualifier list"))
-        } else {
-            Ok(Self { items })
-        }
+macro_rules! impl_list {
+    ($($ty:ty)*) => {
+        $(
+            impl Parse for $ty {
+                fn parse(parse: ParseStream) -> Result<Self> {
+                    let items = parse_into_vec(parse);
+                    if items.is_empty() {
+                        Err(parse.error("empty type qualifier list"))
+                    } else {
+                        Ok(Self { items })
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl_list!(
+    TypeQualifierList
+    TypeSpecifierList
+    FunctionSpecifierList
+    StorageClassList
+    AlignmentSpecifierList
+);
+
+ast_enum! {
+    pub enum Specifier {
+        Qualifier(TypeQualifier),
+        Type(TypeSpecifier),
+        Function(FunctionSpecifier),
+        Alignment(AlignmentSpecifier),
+        Storage(StorageClass),
     }
 }
 
-impl Parse for TypeSpecifierList {
+impl Parse for Specifier {
     fn parse(parse: ParseStream) -> Result<Self> {
-        let items = parse_into_vec(parse);
-        if items.is_empty() {
-            Err(parse.error("empty type specifier list"))
+        Ok(if parse.fork().parse::<FunctionSpecifier>().is_ok() {
+            Self::Function(parse.parse()?)
+        } else if parse.fork().parse::<AlignmentSpecifier>().is_ok() {
+            Self::Alignment(parse.parse()?)
+        } else if parse.fork().parse::<TypeSpecifier>().is_ok() {
+            Self::Type(parse.parse()?)
+        } else if parse.fork().parse::<TypeQualifier>().is_ok() {
+            Self::Qualifier(parse.parse()?)
+        } else if parse.fork().parse::<StorageClass>().is_ok() {
+            Self::Storage(parse.parse()?)
         } else {
-            Ok(Self { items })
-        }
+            return Err(parse.error("expected valid specifier"));
+        })
     }
 }
 
-impl Parse for FunctionSpecifierList {
-    fn parse(parse: ParseStream) -> Result<Self> {
-        let items = parse_into_vec(parse);
-        if items.is_empty() {
-            Err(parse.error("empty function specifier list"))
-        } else {
-            Ok(Self { items })
-        }
+ast_struct! {
+    pub struct SpecifierList {
+        pub items: Vec<Specifier>
     }
 }
 
-impl Parse for AlignmentSpecifierList {
+impl Parse for SpecifierList {
     fn parse(parse: ParseStream) -> Result<Self> {
-        let items = parse_into_vec(parse);
+        let mut items = vec![];
+        while let Ok(specifier) = parse.parse() {
+            items.push(specifier)
+        }
         if items.is_empty() {
-            Err(parse.error("empty alignment specifier list"))
+            Err(parse.error("expected at least one specifier"))
         } else {
             Ok(Self { items })
         }
@@ -123,10 +156,7 @@ impl Parse for AlignmentSpecifierList {
 }
 
 mod quote {
-    use super::{
-        AlignmentSpecifier, AlignmentSpecifierList, FunctionSpecifier, FunctionSpecifierList,
-        TypeQualifier, TypeQualifierList, TypeSpecifier, TypeSpecifierList,
-    };
+    use super::*;
     use crate::{ToTokens, TokenStream};
 
     impl ToTokens for TypeQualifier {
@@ -167,39 +197,47 @@ mod quote {
         }
     }
 
+    impl ToTokens for StorageClass {
+        fn to_tokens(&self, tokens: &mut TokenStream) {
+            match self {
+                StorageClass::Typedef(t) => t.to_tokens(tokens),
+                StorageClass::Extern(t) => t.to_tokens(tokens),
+                StorageClass::Static(t) => t.to_tokens(tokens),
+                StorageClass::ThreadLocal(t) => t.to_tokens(tokens),
+            }
+        }
+    }
+
     impl ToTokens for AlignmentSpecifier {
         fn to_tokens(&self, tokens: &mut TokenStream) {}
     }
 
-    impl ToTokens for TypeQualifierList {
+    impl ToTokens for Specifier {
         fn to_tokens(&self, tokens: &mut TokenStream) {
-            for item in &self.items {
-                item.to_tokens(tokens)
+            match self {
+                Specifier::Qualifier(e) => e.to_tokens(tokens),
+                Specifier::Type(e) => e.to_tokens(tokens),
+                Specifier::Function(e) => e.to_tokens(tokens),
+                Specifier::Alignment(e) => e.to_tokens(tokens),
+                Specifier::Storage(e) => e.to_tokens(tokens),
             }
         }
     }
 
-    impl ToTokens for TypeSpecifierList {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            for item in &self.items {
-                item.to_tokens(tokens)
-            }
-        }
+    macro_rules! impl_list {
+        ($($ty:ty)*) => {
+            $(
+                impl ToTokens for $ty {
+                    fn to_tokens(&self, tokens: &mut TokenStream) {
+                        for item in &self.items {
+                            item.to_tokens(tokens)
+                        }
+                    }
+                }
+            )*
+
+        };
     }
 
-    impl ToTokens for FunctionSpecifierList {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            for item in &self.items {
-                item.to_tokens(tokens)
-            }
-        }
-    }
-
-    impl ToTokens for AlignmentSpecifierList {
-        fn to_tokens(&self, tokens: &mut TokenStream) {
-            for item in &self.items {
-                item.to_tokens(tokens)
-            }
-        }
-    }
+    impl_list!(TypeQualifierList TypeSpecifierList FunctionSpecifierList StorageClassList AlignmentSpecifierList SpecifierList);
 }

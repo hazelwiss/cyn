@@ -2,6 +2,7 @@ use crate::{tokens, Expr, Stmnt};
 
 ast_struct! {
     pub struct While {
+        pub while_kw: token![while],
         pub paren: tokens::Paren,
         pub condition: Box<Expr>,
         pub stmnt: Box<Stmnt>
@@ -38,6 +39,7 @@ impl Parse for While {
     fn parse(parse: ParseStream) -> Result<Self> {
         let content;
         Ok(Self {
+            while_kw: parse.parse()?,
             paren: parenthesized!(content in parse)?,
             condition: Box::new(content.parse()?),
             stmnt: parse.parse()?,
@@ -82,10 +84,12 @@ mod quote {
     impl ToTokens for While {
         fn to_tokens(&self, tokens: &mut TokenStream) {
             let Self {
+                while_kw,
                 paren: _,
                 condition,
                 stmnt,
             } = self;
+            while_kw.to_tokens(tokens);
             to_tokens::parenthesized(condition).to_tokens(tokens);
             stmnt.to_tokens(tokens)
         }

@@ -1,4 +1,5 @@
 use crate::buffers::Cursor;
+use crate::error::Pos;
 use crate::parse::{Parse, ParseStream};
 use crate::{Result, ToTokens, TokenStream};
 use std::fmt::Display;
@@ -29,21 +30,37 @@ pub(crate) fn match_punct(str: &str) -> PunctMatch {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Literal {
     Str(String),
     Int(i128),
     Float(f64),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(crate) struct TokenCell {
-    pub col: usize,
-    pub row: usize,
+    pos: Option<Pos>,
     pub tt: TokenTree,
 }
 
-#[derive(Clone)]
+impl TokenCell {
+    pub fn new(tt: TokenTree) -> Self {
+        Self { pos: None, tt }
+    }
+
+    pub fn new_with_pos(tt: TokenTree, col: usize, row: usize) -> Self {
+        Self {
+            pos: Some(Pos { col, row }),
+            tt,
+        }
+    }
+
+    pub fn pos(&self) -> Option<Pos> {
+        self.pos
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum TokenTree {
     Ident(String),
     Literal(Literal),
@@ -137,6 +154,15 @@ macro_rules! define_keywords {
 
             impl_token_parse!($ident);
         )*
+
+        pub(crate) fn is_keyword(str: &str) -> bool {
+            match str {
+                $(
+                    $str => true,
+                )*
+                _ => false,
+            }
+        }
 
         mod quote_kw {
             use $crate::TokenStream;

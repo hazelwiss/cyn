@@ -37,7 +37,7 @@ pub struct Punctuated<T, P> {
 impl<T: Parse, P: Peek + Parse> Punctuated<T, P> {
     pub fn parse_non_terminated(parse: ParseStream) -> Result<Self> {
         let mut vec = vec![];
-        if parse.fork().expect::<T>() {
+        if !parse.is_empty() {
             loop {
                 vec.push(parse.parse()?);
                 if parse.peek::<P>() {
@@ -54,17 +54,8 @@ impl<T: Parse, P: Peek + Parse> Punctuated<T, P> {
         })
     }
 
-    pub fn parse_single_non_terminated(parse: ParseStream) -> Result<Self> {
-        let mut vec = vec![];
-        vec.push(parse.parse()?);
-        while parse.peek::<P>() {
-            vec.push(parse.parse()?);
-        }
-        Ok(Self {
-            punctuated: vec,
-            mark: Default::default(),
-            terminated: false,
-        })
+    pub fn len(&self) -> usize {
+        self.punctuated.len()
     }
 }
 

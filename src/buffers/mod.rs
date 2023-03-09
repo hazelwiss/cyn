@@ -1,5 +1,6 @@
 mod parse;
 
+use crate::error::Pos;
 use crate::parse::{Parse, ParseStream};
 use crate::peek::Lookahead;
 use crate::tokens::{Delimeter, Literal, Punct, TokenCell, TokenTree};
@@ -7,7 +8,7 @@ use crate::{Error, Peek, Result};
 use std::cell::Cell;
 use std::{fmt::Display, marker::PhantomData};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TokenStream {
     entries: Box<[TokenCell]>,
 }
@@ -52,11 +53,11 @@ impl TokenStream {
 
     pub fn extend_one(&mut self, tt: TokenTree) {
         let mut new = self.entries.to_vec();
-        new.push(TokenCell { col: 0, row: 0, tt });
+        new.push(TokenCell::new(tt));
         self.entries = new.into_boxed_slice();
     }
 
-    pub fn parse<'a, P: Parse>(self) -> Result<P>
+    pub fn parse<'a, P: Parse>(&'a self) -> ::core::result::Result<P, Error<'a>>
     where
         Self: 'a,
     {
@@ -110,7 +111,7 @@ impl<'a> Cursor<'a> {
     }
 
     fn entry_cell(self) -> Option<&'a TokenCell> {
-        if self.pos < self.end {
+        if !self.is_empty() {
             let val = unsafe { &*self.pos };
             Some(val)
         } else {
@@ -128,10 +129,6 @@ impl<'a> Cursor<'a> {
 
     pub fn peek<P: Peek>(self) -> bool {
         P::peek(self.clone())
-    }
-
-    pub fn lookahead1(self) -> Lookahead<'a> {
-        Lookahead::new(self)
     }
 
     pub fn set(&mut self, other: Self) {
@@ -198,14 +195,17 @@ impl<'a> Cursor<'a> {
         TokenStream::new(vec.into_boxed_slice())
     }
 
-    pub fn error(self, err: impl Display) -> Error {
+    pub fn error(self, err: impl Display) -> Error<'a> {
         let entry = self.entry_cell();
-        let (col, row) = if let Some(entry) = entry {
-            (entry.col, entry.row)
+        if let Some(entry) = entry {
+            if let Some(Pos { col, row }) = entry.pos() {
+                Error::new_with_pos(err, Some(self), None, col, row)
+            } else {
+                Error::new(err, Some(self))
+            }
         } else {
-            (usize::MAX, usize::MAX)
-        };
-        Error::new(err.to_string(), None, col, row)
+            Error::new(err, Some(self))
+        }
     }
 }
 
@@ -256,7 +256,7 @@ impl<'a> ParseBuffer<'a> {
     }
 
     pub fn lookahead1(&self) -> Lookahead {
-        self.cursor().lookahead1()
+        Lookahead::new(self.cursor())
     }
 
     pub fn peek<P: Peek>(&self) -> bool {
@@ -286,7 +286,7 @@ impl<'a> ParseBuffer<'a> {
         self.cursor.set(self.cursor().next())
     }
 
-    pub fn error(&self, err: impl Display) -> Error {
+    pub fn error(&self, err: impl Display) -> Error<'static> {
         self.cursor.get().error(err)
     }
 
